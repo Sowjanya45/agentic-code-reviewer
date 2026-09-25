@@ -1,0 +1,27 @@
+[project]
+name = "agentic-code-reviewer"
+version = "0.1.0"
+description = "Agentic AI code reviewer (LangGraph + Groq) with an automated SZZ-style historical bug-mining evaluation harness"
+requires-python = ">=3.10"
+dependencies = [
+    "langgraph>=0.2.0",
+    "langchain-core>=0.3.0",
+    "langchain-groq>=0.2.0",
+    "PyGithub>=2.3.0",
+    "pydantic>=2.7.0",
+    "tree-sitter>=0.23.0",
+    "tree-sitter-python>=0.23.0",
+    "python-dotenv>=1.0.0",
+    "GitPython>=3.1.0",
+    "tenacity>=9.0.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0.0", "pytest-mock>=3.14.0"]
+
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
