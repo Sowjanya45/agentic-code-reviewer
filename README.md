@@ -156,5 +156,30 @@ pytest
       **107 bug-fix pairs mined** from Flask's last 400 fix-like commits
       (`data/mined/flask.json`)
 - [x] Evaluation harness + ruff/naive-LLM baselines (code complete)
-- [ ] Full evaluation run against the mined dataset — pending a Groq API key
-      to actually execute the LLM calls end-to-end
+- [x] End-to-end verified against a real mined bug (`d718ecf6`, Flask's
+      `provide_automatic_options` bug): reviewer ran with 0 failed chunks and
+      raised 4 findings, two of which correctly overlap the real bug location
+- [x] Minimal local demo UI (`src/webui`) to visually run/inspect reviews
+- [ ] Full evaluation run across all 107 mined bugs (recall/precision numbers)
+      — the pipeline is proven correct on a real case; running the whole
+      dataset just takes longer due to Groq free-tier rate limits (see below)
+
+### Notes on getting this actually working
+
+A few non-obvious issues had to be fixed to get real LLM calls working
+reliably, worth knowing if you extend this:
+
+- **Groq's free tier enforces a tokens-per-minute (TPM) cap as low as 8000**
+  for larger models — a global rate limiter (`reviewer/llm.py`) paces every
+  call process-wide, since LangGraph's concurrent fan-out otherwise floods it
+  instantly even for a single small review.
+- **A change at class scope inside a huge class (e.g. Flask's main `App`
+  class) made the tree-sitter context-builder expand to nearly the whole
+  file** (1400+ lines, ~14K tokens) because it picked the smallest enclosing
+  node, which was the entire class. Fixed with a max-size cap that falls
+  back to the line-window instead (`chunking.py`).
+- **Forced tool-calling (`with_structured_output`'s default method)
+  unreliably fails on this model specifically when the correct answer is "no
+  findings"** — it either refuses to call the tool or hallucinates a
+  nonexistent one. Switched to `json_mode`, which has no such failure mode,
+  at the cost of having to spell out the JSON schema in the prompt manually.
