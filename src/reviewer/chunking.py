@@ -10,6 +10,9 @@ from __future__ import annotations
 from .schema import Hunk
 
 _FALLBACK_WINDOW = 15  # lines of context above/below when tree-sitter can't help
+_MAX_ENCLOSING_LINES = 120  # a match this large is a class/module, not a
+                            # focused function -- fall back instead of
+                            # sending a near-whole-file prompt to the LLM
 
 _PY_LANGUAGE = None
 
@@ -81,6 +84,8 @@ def build_context(hunk: Hunk, full_content: str | None) -> Hunk:
     enclosing = None
     if hunk.file.endswith(".py"):
         enclosing = _enclosing_python_range(full_content, hunk.context_start, hunk.context_end)
+        if enclosing and (enclosing[1] - enclosing[0] + 1) > _MAX_ENCLOSING_LINES:
+            enclosing = None  # e.g. a change at class scope in a huge class
 
     if enclosing:
         ctx_start, ctx_end = enclosing

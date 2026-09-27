@@ -62,3 +62,21 @@ def test_no_content_returns_hunk_unchanged():
     hunk = _make_hunk(9, 9)
     expanded = build_context(hunk, None)
     assert expanded is hunk
+
+
+def test_falls_back_when_enclosing_scope_is_too_large():
+    # A change directly at class scope (not inside any method) in a class
+    # with 200+ lines should NOT expand to the whole class -- that would
+    # blow the LLM's token budget on real large classes (e.g. Flask's App).
+    lines = ["class Big:"]
+    lines += [f"    x{i} = {i}" for i in range(1, 100)]
+    lines.append("    TARGET = 1")  # class-scope attribute, no enclosing method
+    lines += [f"    y{i} = {i}" for i in range(1, 100)]
+    source = "\n".join(lines)
+    target_line = 101  # the "TARGET = 1" line
+
+    hunk = _make_hunk(target_line, target_line)
+    expanded = build_context(hunk, source)
+
+    span = expanded.context_end - expanded.context_start + 1
+    assert span <= 40  # fell back to the small line-window, not the whole class
