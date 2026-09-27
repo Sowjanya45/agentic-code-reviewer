@@ -39,6 +39,10 @@ Only report issues you are reasonably confident about; it is fine to return
 no findings. Every finding must cite a specific line range within the
 context shown below (not lines outside it).
 
+Respond with a single JSON object matching this schema:
+{{"findings": [{{"file": string, "line_start": int, "line_end": int, "category": "{category}", "severity": "blocker" | "warning" | "nit", "confidence": number between 0 and 1, "summary": string, "detail": string, "suggested_fix": string or null}}]}}
+If there are no issues, respond with exactly {{"findings": []}}.
+
 File: {file}
 Context lines {context_start}-{context_end} (line numbers match this file):
 ```
@@ -55,6 +59,7 @@ The diff hunk being reviewed (this is what actually changed):
 def _build_prompt(hunk: Hunk, category: str) -> str:
     return _PROMPT_TEMPLATE.format(
         instructions=_CATEGORY_INSTRUCTIONS[category],
+        category=category,
         file=hunk.file,
         context_start=hunk.context_start,
         context_end=hunk.context_end,

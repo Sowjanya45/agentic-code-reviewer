@@ -54,8 +54,10 @@ def run_ruff_baseline(git_repo: git.Repo, commit_sha: str) -> list[Finding]:
 
 _NAIVE_PROMPT_TEMPLATE = """Review the following code diff for any issues: security
 problems, missing/incorrect error handling, missing test coverage, or logic bugs.
-Report every issue you find as a structured finding with a file, line range,
-category, severity, confidence, summary and detail.
+
+Respond with a single JSON object matching this schema:
+{{"findings": [{{"file": string, "line_start": int, "line_end": int, "category": "security" | "error_handling" | "missing_test" | "logic", "severity": "blocker" | "warning" | "nit", "confidence": number between 0 and 1, "summary": string, "detail": string, "suggested_fix": string or null}}]}}
+If there are no issues, respond with exactly {{"findings": []}}.
 
 Diff:
 ```

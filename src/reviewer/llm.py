@@ -67,7 +67,13 @@ def _is_retryable(exc: BaseException) -> bool:
     reraise=True,
 )
 def call_structured(prompt: str, output_schema) -> object:
-    """Call the LLM with structured output, retrying on rate limits/5xx."""
+    """Call the LLM with structured output, retrying on rate limits/5xx.
+
+    Uses json_mode rather than forced tool-calling: this model reliably
+    fails forced tool-calls when the correct answer is "no findings" (it
+    either refuses to call the tool at all, or hallucinates a nonexistent
+    tool name) -- json_mode has no such failure mode.
+    """
     _throttle()
-    llm = get_llm().with_structured_output(output_schema)
+    llm = get_llm().with_structured_output(output_schema, method="json_mode")
     return llm.invoke(prompt)
