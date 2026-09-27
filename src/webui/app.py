@@ -21,7 +21,7 @@ load_dotenv()
 
 from eval.matching import bug_is_caught  # noqa: E402
 from mining.dataset import load_dataset  # noqa: E402
-from reviewer.graph import review_local_commit  # noqa: E402
+from reviewer.graph import review_local_commit, review_raw_code  # noqa: E402
 
 REPO_PATH = Path("data/repos/flask")
 DATASET_PATH = Path("data/mined/flask.json")
@@ -57,6 +57,9 @@ PAGE_TEMPLATE = """
   .status-miss { color: #b45309; font-weight: 600; }
   .error { background: #fee2e2; border: 1px solid #dc2626; border-radius: 8px;
            padding: 1rem; color: #7f1d1d; }
+  textarea { width: 100%; box-sizing: border-box; font-family: monospace;
+             font-size: 0.85rem; padding: 0.5rem; }
+  .divider { text-align: center; color: #999; font-size: 0.85rem; margin: 0.5rem 0; }
 </style>
 </head>
 <body>
@@ -64,6 +67,7 @@ PAGE_TEMPLATE = """
   <p class="subtitle">LangGraph + Groq &middot; evaluated against real mined bugs from Flask's history</p>
 
   <form method="post">
+    <input type="hidden" name="mode" value="commit">
     <label for="bug_choice">Pick a known mined bug (Flask history)</label>
     <select name="bug_choice" id="bug_choice">
       <option value="">-- custom commit SHA below --</option>
@@ -78,6 +82,19 @@ PAGE_TEMPLATE = """
     <input type="text" name="commit_sha" id="commit_sha" placeholder="e.g. 28d5a4d7..." value="{{ custom_sha or '' }}">
 
     <button type="submit">Run Review</button>
+  </form>
+
+  <p class="divider">&mdash; or &mdash;</p>
+
+  <form method="post">
+    <input type="hidden" name="mode" value="paste">
+    <label for="raw_filename">Filename (for context only, e.g. language)</label>
+    <input type="text" name="raw_filename" id="raw_filename" placeholder="snippet.py" value="{{ raw_filename or 'snippet.py' }}">
+
+    <label for="raw_code">Paste code to review</label>
+    <textarea name="raw_code" id="raw_code" rows="12" placeholder="def run_query(user_input):&#10;    return db.execute('SELECT * FROM users WHERE name = ' + user_input)">{{ raw_code or '' }}</textarea>
+
+    <button type="submit">Review Pasted Code</button>
   </form>
 
   {% if error %}
@@ -130,25 +147,42 @@ def index():
     caught = None
     selected_sha = ""
     custom_sha = ""
+    raw_code = ""
+    raw_filename = "snippet.py"
 
     if request.method == "POST":
-        selected_sha = request.form.get("bug_choice", "")
-        custom_sha = request.form.get("commit_sha", "").strip()
-        commit_sha = custom_sha or selected_sha
+        mode = request.form.get("mode", "commit")
 
-        if not commit_sha:
-            error = "Pick a known bug or paste a commit SHA."
+        if mode == "paste":
+            raw_code = request.form.get("raw_code", "")
+            raw_filename = request.form.get("raw_filename", "").strip() or "snippet.py"
+            if not raw_code.strip():
+                error = "Paste some code first."
+            else:
+                try:
+                    start = time.time()
+                    report = review_raw_code(raw_code, raw_filename)
+                    elapsed = round(time.time() - start, 1)
+                except Exception as exc:  # noqa: BLE001 - show the error in the UI, don't crash the demo
+                    error = str(exc)
         else:
-            try:
-                repo = git.Repo(REPO_PATH)
-                start = time.time()
-                report = review_local_commit(repo, commit_sha)
-                elapsed = round(time.time() - start, 1)
-                bug = next((b for b in known_bugs if b.bug_commit == commit_sha), None)
-                if bug:
-                    caught = bug_is_caught(report.findings, bug)
-            except Exception as exc:  # noqa: BLE001 - show the error in the UI, don't crash the demo
-                error = str(exc)
+            selected_sha = request.form.get("bug_choice", "")
+            custom_sha = request.form.get("commit_sha", "").strip()
+            commit_sha = custom_sha or selected_sha
+
+            if not commit_sha:
+                error = "Pick a known bug or paste a commit SHA."
+            else:
+                try:
+                    repo = git.Repo(REPO_PATH)
+                    start = time.time()
+                    report = review_local_commit(repo, commit_sha)
+                    elapsed = round(time.time() - start, 1)
+                    bug = next((b for b in known_bugs if b.bug_commit == commit_sha), None)
+                    if bug:
+                        caught = bug_is_caught(report.findings, bug)
+                except Exception as exc:  # noqa: BLE001 - show the error in the UI, don't crash the demo
+                    error = str(exc)
 
     return render_template_string(
         PAGE_TEMPLATE,
@@ -160,6 +194,8 @@ def index():
         caught=caught,
         selected_sha=selected_sha,
         custom_sha=custom_sha,
+        raw_code=raw_code,
+        raw_filename=raw_filename,
     )
 
 
