@@ -116,6 +116,17 @@ PAGE_TEMPLATE = """
       {% endif %}
     </div>
 
+    {% if report.failure_reasons %}
+      <div class="error">
+        <strong>{{ report.failed_chunks }} check(s) failed with:</strong>
+        <ul>
+          {% for reason in report.failure_reasons %}
+            <li>{{ reason }}</li>
+          {% endfor %}
+        </ul>
+      </div>
+    {% endif %}
+
     {% if report.findings %}
       {% for f in report.findings %}
         <div class="finding {{ f.severity }}">

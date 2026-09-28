@@ -58,3 +58,4 @@ class ReviewReport(BaseModel):
     files_skipped: int
     skipped_files: list[str] = Field(default_factory=list)
     failed_chunks: int = 0
+    failure_reasons: list[str] = Field(default_factory=list)

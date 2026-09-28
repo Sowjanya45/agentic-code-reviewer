@@ -92,6 +92,9 @@ def aggregate_node(state: GraphState) -> dict:
 
     failed_chunks = sum(1 for o in outcomes if o.status == "failed")
     files_reviewed = len({o.hunk.file for o in outcomes})
+    # dedupe identical error strings -- the same root cause (e.g. a bad API
+    # key) usually fails every chunk with the same message
+    failure_reasons = list(dict.fromkeys(o.error for o in outcomes if o.status == "failed" and o.error))
 
     report = ReviewReport(
         pr_identifier=state["pr_identifier"],
@@ -100,6 +103,7 @@ def aggregate_node(state: GraphState) -> dict:
         files_skipped=len(state.get("skipped_files", [])),
         skipped_files=state.get("skipped_files", []),
         failed_chunks=failed_chunks,
+        failure_reasons=failure_reasons,
     )
     return {"report": report}
 
