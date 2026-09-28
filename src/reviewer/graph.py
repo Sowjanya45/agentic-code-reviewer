@@ -25,6 +25,7 @@ class GraphState(TypedDict, total=False):
     repo_full_name: str
     pr_number: int
     github_token: str
+    groq_api_key: str
     raw_code: str  # only for mode == "raw_code"
     raw_filename: str
     max_files: int
@@ -37,6 +38,7 @@ class GraphState(TypedDict, total=False):
 class CheckerInput(TypedDict):
     hunk: Hunk
     category: str
+    groq_api_key: str
 
 
 def ingest_node(state: GraphState) -> dict:
@@ -63,7 +65,7 @@ def fan_out_to_checkers(state: GraphState):
     if not state["hunks"]:
         return "aggregate"
     return [
-        Send("checker_node", {"hunk": hunk, "category": category})
+        Send("checker_node", {"hunk": hunk, "category": category, "groq_api_key": state["groq_api_key"]})
         for hunk in state["hunks"]
         for category in CATEGORIES
     ]
@@ -71,7 +73,7 @@ def fan_out_to_checkers(state: GraphState):
 
 def checker_node(state: CheckerInput) -> dict:
     cache = ReviewCache()
-    outcome = review_chunk(state["hunk"], state["category"], cache=cache)
+    outcome = review_chunk(state["hunk"], state["category"], state["groq_api_key"], cache=cache)
     cache.save()
     return {"outcomes": [outcome]}
 
@@ -113,7 +115,9 @@ def build_graph():
     return graph.compile()
 
 
-def review_pr(repo_full_name: str, pr_number: int, github_token: str, max_files: int = MAX_FILES_DEFAULT) -> ReviewReport:
+def review_pr(
+    repo_full_name: str, pr_number: int, github_token: str, groq_api_key: str, max_files: int = MAX_FILES_DEFAULT
+) -> ReviewReport:
     app = build_graph()
     final_state = app.invoke(
         {
@@ -122,13 +126,14 @@ def review_pr(repo_full_name: str, pr_number: int, github_token: str, max_files:
             "repo_full_name": repo_full_name,
             "pr_number": pr_number,
             "github_token": github_token,
+            "groq_api_key": groq_api_key,
             "max_files": max_files,
         }
     )
     return final_state["report"]
 
 
-def review_raw_code(code: str, filename: str = "pasted_code.py") -> ReviewReport:
+def review_raw_code(code: str, groq_api_key: str, filename: str = "pasted_code.py") -> ReviewReport:
     """Review a pasted code snippet directly, through the same checker/
     aggregation/failure-handling pipeline as a PR."""
     app = build_graph()
@@ -138,6 +143,7 @@ def review_raw_code(code: str, filename: str = "pasted_code.py") -> ReviewReport
             "pr_identifier": f"pasted:{filename}",
             "raw_code": code,
             "raw_filename": filename,
+            "groq_api_key": groq_api_key,
         }
     )
     return final_state["report"]

@@ -68,7 +68,9 @@ def _build_prompt(hunk: Hunk, category: str) -> str:
     )
 
 
-def review_chunk(hunk: Hunk, category: str, cache: ReviewCache | None = None) -> ChunkReviewOutcome:
+def review_chunk(
+    hunk: Hunk, category: str, groq_api_key: str, cache: ReviewCache | None = None
+) -> ChunkReviewOutcome:
     cache = cache or ReviewCache()
     cached = cache.get(hunk.content_hash, category)
     if cached is not None:
@@ -76,7 +78,7 @@ def review_chunk(hunk: Hunk, category: str, cache: ReviewCache | None = None) ->
 
     prompt = _build_prompt(hunk, category)
     try:
-        result: CheckerResult = call_structured(prompt, CheckerResult)
+        result: CheckerResult = call_structured(prompt, CheckerResult, api_key=groq_api_key)
     except Exception as exc:  # noqa: BLE001 - a failing chunk must not crash the run
         return ChunkReviewOutcome(hunk=hunk, findings=[], status="failed", error=str(exc))
 

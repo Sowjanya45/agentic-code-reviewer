@@ -25,14 +25,15 @@ def main() -> None:
     args = parser.parse_args()
 
     github_token = os.environ.get("GITHUB_TOKEN")
+    groq_api_key = os.environ.get("GROQ_API_KEY")
     if not github_token:
         print("GITHUB_TOKEN is not set (see .env.example).", file=sys.stderr)
         sys.exit(1)
-    if not os.environ.get("GROQ_API_KEY"):
+    if not groq_api_key:
         print("GROQ_API_KEY is not set (see .env.example).", file=sys.stderr)
         sys.exit(1)
 
-    report = review_pr(args.repo, args.pr_number, github_token, max_files=args.max_files)
+    report = review_pr(args.repo, args.pr_number, github_token, groq_api_key, max_files=args.max_files)
     print(to_markdown(report))
 
 

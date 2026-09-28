@@ -1,6 +1,10 @@
 """Groq LLM client with retry/backoff, including explicit handling of the
-free-tier's rate limits (HTTP 429) -- the evaluation harness makes many
-calls in a row, so this matters more here than in a one-off review."""
+free-tier's rate limits (HTTP 429).
+
+Every call takes an explicit `api_key` -- there is no shared/global key,
+since different callers (different logged-in users on the hosted server)
+each bring their own Groq account and their own rate-limit budget.
+"""
 from __future__ import annotations
 
 import os
@@ -15,37 +19,41 @@ from tenacity import (
     wait_exponential,
 )
 
-_client: ChatGroq | None = None
+_DEFAULT_MODEL = "openai/gpt-oss-120b"
+
+_clients: dict[tuple[str, str], ChatGroq] = {}
+_clients_lock = threading.Lock()
 
 # LangGraph fans checker calls out concurrently (one per hunk x category), but
 # Groq's free tier has a low per-minute request cap -- left unthrottled, even
 # a single small review floods it and every call gets 429'd. This serializes
-# all Groq calls process-wide to at most one every _MIN_INTERVAL_SECONDS,
-# turning the concurrent fan-out into an effectively-paced queue.
+# calls made with the SAME api_key to at most one every _MIN_INTERVAL_SECONDS;
+# different users' keys have independent rate-limit budgets on Groq's side,
+# so they are paced independently rather than sharing one global queue.
 _MIN_INTERVAL_SECONDS = float(os.environ.get("GROQ_MIN_INTERVAL_SECONDS", "3.0"))
 _rate_lock = threading.Lock()
-_last_call_started_at = 0.0
+_last_call_started_at: dict[str, float] = {}
 
 
-def _throttle() -> None:
-    global _last_call_started_at
+def _throttle(api_key: str) -> None:
     with _rate_lock:
         now = time.monotonic()
-        wait = _last_call_started_at + _MIN_INTERVAL_SECONDS - now
+        last = _last_call_started_at.get(api_key, 0.0)
+        wait = last + _MIN_INTERVAL_SECONDS - now
         if wait > 0:
             time.sleep(wait)
-        _last_call_started_at = time.monotonic()
+        _last_call_started_at[api_key] = time.monotonic()
 
 
-def get_llm() -> ChatGroq:
-    global _client
-    if _client is None:
-        _client = ChatGroq(
-            model=os.environ.get("GROQ_MODEL", "openai/gpt-oss-120b"),
-            api_key=os.environ["GROQ_API_KEY"],
-            temperature=0,
-        )
-    return _client
+def get_llm(api_key: str, model: str | None = None) -> ChatGroq:
+    model = model or os.environ.get("GROQ_MODEL", _DEFAULT_MODEL)
+    cache_key = (api_key, model)
+    with _clients_lock:
+        client = _clients.get(cache_key)
+        if client is None:
+            client = ChatGroq(model=model, api_key=api_key, temperature=0)
+            _clients[cache_key] = client
+        return client
 
 
 def _is_retryable(exc: BaseException) -> bool:
@@ -66,7 +74,7 @@ def _is_retryable(exc: BaseException) -> bool:
     stop=stop_after_attempt(6),
     reraise=True,
 )
-def call_structured(prompt: str, output_schema) -> object:
+def call_structured(prompt: str, output_schema, api_key: str, model: str | None = None) -> object:
     """Call the LLM with structured output, retrying on rate limits/5xx.
 
     Uses json_mode rather than forced tool-calling: this model reliably
@@ -74,6 +82,6 @@ def call_structured(prompt: str, output_schema) -> object:
     either refuses to call the tool at all, or hallucinates a nonexistent
     tool name) -- json_mode has no such failure mode.
     """
-    _throttle()
-    llm = get_llm().with_structured_output(output_schema, method="json_mode")
+    _throttle(api_key)
+    llm = get_llm(api_key, model).with_structured_output(output_schema, method="json_mode")
     return llm.invoke(prompt)

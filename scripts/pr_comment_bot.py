@@ -19,9 +19,10 @@ def main() -> None:
     repo_full_name = os.environ["REPO_FULL_NAME"]
     pr_number = int(os.environ["PR_NUMBER"])
     github_token = os.environ["GITHUB_TOKEN"]
+    groq_api_key = os.environ["GROQ_API_KEY"]
 
     try:
-        report = review_pr(repo_full_name, pr_number, github_token)
+        report = review_pr(repo_full_name, pr_number, github_token, groq_api_key)
         body = to_markdown(report)
     except Exception as exc:  # noqa: BLE001 - always leave a comment, even on failure
         body = f"## Agentic Code Review\n\nThe review failed to run: `{exc}`"

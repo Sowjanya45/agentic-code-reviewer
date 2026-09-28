@@ -138,15 +138,19 @@ def index():
     if request.method == "POST":
         mode = request.form.get("mode", "pr")
 
+        groq_api_key = os.environ.get("GROQ_API_KEY")
+
         if mode == "paste":
             raw_code = request.form.get("raw_code", "")
             raw_filename = request.form.get("raw_filename", "").strip() or "snippet.py"
             if not raw_code.strip():
                 error = "Paste some code first."
+            elif not groq_api_key:
+                error = "GROQ_API_KEY is not set in .env."
             else:
                 try:
                     start = time.time()
-                    report = review_raw_code(raw_code, raw_filename)
+                    report = review_raw_code(raw_code, groq_api_key, raw_filename)
                     elapsed = round(time.time() - start, 1)
                 except Exception as exc:  # noqa: BLE001 - show the error in the UI, don't crash the demo
                     error = str(exc)
@@ -159,10 +163,12 @@ def index():
                 error = "Enter both a repo (owner/repo) and a PR number."
             elif not github_token:
                 error = "GITHUB_TOKEN is not set in .env -- required to fetch a live PR."
+            elif not groq_api_key:
+                error = "GROQ_API_KEY is not set in .env."
             else:
                 try:
                     start = time.time()
-                    report = review_pr(repo_full_name, int(pr_number), github_token)
+                    report = review_pr(repo_full_name, int(pr_number), github_token, groq_api_key)
                     elapsed = round(time.time() - start, 1)
                 except Exception as exc:  # noqa: BLE001 - show the error in the UI, don't crash the demo
                     error = str(exc)
