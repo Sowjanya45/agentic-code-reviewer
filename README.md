@@ -7,19 +7,28 @@ PR, a comment on that PR ("please review this"), or a pasted snippet.
 Built with **LangGraph** for orchestration and **Groq** (free-tier,
 open-source models) for inference.
 
-## Three ways to use it
+## Ways to use it
 
-1. **Comment-triggered PR review** — comment anything containing the word
-   "review" (e.g. "can you please review this PR?") on a pull request in a
-   repo with the included GitHub Action set up, and it reviews the PR and
-   replies with its findings as a comment. No server or hosting needed —
-   it runs entirely as a GitHub Action.
-2. **Web UI** — a small local Flask app to review a live PR by number, or
-   paste a code snippet directly, and see structured findings in the browser.
-3. **CLI** — `python -m reviewer.cli owner/repo 123` for a one-off review
+1. **Hosted multi-tenant server** (`server/`) — install a GitHub App once on
+   your account, log in, add your own Groq key, and it works on *every*
+   repo the installation covers — including repos added later. Comment
+   anything containing "review" on any PR in any of those repos and it
+   reviews and replies automatically; or use the logged-in dashboard to
+   manually review a PR by number or paste a snippet. This is the "real
+   product" version — see **The hosted server** section below.
+2. **Comment-triggered GitHub Action** (`.github/workflows/pr-review-bot.yml`)
+   — the lightweight, single-repo alternative: comment "review" on a PR in
+   *this* repo and a GitHub Action reviews it. No server, no GitHub App,
+   no login — just add one repo secret. Doesn't extend to other repos
+   without copying the workflow file into each one (that's exactly what
+   the hosted server exists to avoid).
+3. **Local web UI** (`webui/`) — a small local Flask app, single-user,
+   driven by a local `.env` — review a live PR by number, or paste a
+   snippet directly.
+4. **CLI** — `python -m reviewer.cli owner/repo 123` for a one-off review
    from the terminal.
 
-All three go through the exact same reviewer pipeline.
+All four go through the exact same reviewer pipeline (`src/reviewer/`).
 
 ## Architecture
 
@@ -92,6 +101,84 @@ variables → Actions). No GitHub token needs adding — the Action uses the
 repo's automatically-provided `secrets.GITHUB_TOKEN`, scoped to read the PR
 and post comments.
 
+## The hosted server (`server/`)
+
+A GitHub App + Flask server, meant to be deployed once (e.g. on Render) and
+then work across every repo it's installed on, for every user who installs
+it — not just this one repo.
+
+```
+Browser                        Server (Flask)                    GitHub
+   │  Install the App  ────────────┼─────────────────────────────────▶│
+   │                               │◀── installation + OAuth code ────│
+   │                        /github/callback: exchange code for a    │
+   │                        user access token, create/update User,   │
+   │                        link installation_id to that user        │
+   │                               │                                  │
+   │  Paste Groq key on dashboard  │                                  │
+   │        (encrypted at rest) ───▶  stored in Postgres/SQLite      │
+   │                               │                                  │
+(later) comment "please review     │                                  │
+this" on ANY installed repo        │◀──── issue_comment webhook ──────│
+                                    │                                  │
+                              /webhook: verify signature, look up     │
+                              the installation's user + Groq key,     │
+                              mint a short-lived installation token,  │
+                              run review_pr(), post the findings  ────▶ comment
+```
+
+Two GitHub tokens are in play, both landing on the same `review_pr()`:
+- **Dashboard's manual "Review PR" button** uses the logged-in user's own
+  OAuth token (from login) — reflects their own GitHub access.
+- **Automatic webhook-triggered review** uses a short-lived installation
+  token, minted on demand via `server/github_app_auth.py` (PyGithub's
+  built-in GitHub App auth) — works across every repo the installation
+  covers, no personal token involved.
+
+Server pieces: `server/models.py` (SQLAlchemy `User`/`Installation`,
+Groq key and OAuth token stored via `server/crypto.py`'s Fernet
+encryption — never plaintext in the DB), `server/auth.py` ("Sign in with
+GitHub" OAuth login), `server/dashboard.py` (the two manual actions),
+`server/webhook.py` (the automatic path — runs the review in a background
+thread since it can exceed GitHub's ~10s webhook response window),
+`server/app.py` (wires it all together; entry point for
+`gunicorn server.app:app`).
+
+### Setting it up
+
+1. **Create the GitHub App** at github.com/settings/apps/new:
+   - Callback URL / Webhook URL: point at placeholders for now (e.g.
+     `https://example.com/github/callback`) — you'll come back and fix
+     these to your real Render URL after the first deploy.
+   - Enable **"Request user authorization (OAuth) during installation."**
+   - Permissions: **Pull requests** (Read & Write), **Issues** (Read),
+     **Contents** (Read). Subscribe to webhook events: **Issue comment**,
+     **Installation**.
+   - "Where can this GitHub App be installed": start with **"Only on this
+     account."**
+   - Generate a **private key** (downloads a `.pem`) and a **client
+     secret**; note the **App ID** and **Client ID**.
+2. **Deploy to Render**: new Web Service from this repo (start command
+   `gunicorn server.app:app` with `PYTHONPATH=src`, per the `Procfile`),
+   add the free Postgres add-on (sets `DATABASE_URL` automatically), and
+   set the remaining env vars from `.env.example`'s hosted-server section
+   (`GITHUB_APP_ID`, `GITHUB_APP_PRIVATE_KEY` — paste the `.pem` contents
+   — `GITHUB_APP_CLIENT_ID`, `GITHUB_APP_CLIENT_SECRET`,
+   `GITHUB_WEBHOOK_SECRET`, `ENCRYPTION_KEY`, `FLASK_SECRET_KEY`).
+3. Go back to the GitHub App settings and swap the placeholder Callback/
+   Webhook URLs for the real `https://<your-app>.onrender.com/...` ones.
+4. Install the App on your account, log in, paste a Groq key on the
+   dashboard, then test: comment "please review this" on a PR in any repo
+   the app covers.
+
+**Local dev**: omit `DATABASE_URL` to use a local SQLite file
+(`server_dev.db`) automatically. Run with
+`PYTHONPATH=src FLASK_SECRET_KEY=dev ENCRYPTION_KEY=... python -m server.app`.
+The webhook path needs a real GitHub App to test against; the OAuth
+login and dashboard paths work fully locally once `GITHUB_APP_CLIENT_ID`/
+`_SECRET` are set (register a dev instance of the App with
+`http://127.0.0.1:5000/github/callback` as its callback URL).
+
 ## Failure handling
 
 - **Per-node retry with backoff** on LLM/API errors, including a global
@@ -145,10 +232,23 @@ pytest
 - [x] Failure handling: per-node retry with backoff (incl. 429 rate limits),
       chunk-level isolation, size cap, content-hash caching, failure
       reasons surfaced instead of hidden
+- [x] Per-user Groq API keys (the LLM client/rate-limiter are keyed per
+      key, not a single global) -- required for the multi-tenant server
 - [x] Pasted-code review mode, reusing the same pipeline
-- [x] Comment-triggered GitHub Action + PR-comment posting
-- [x] Web UI for live PR review and pasted-code review
-- [x] End-to-end verified against real Groq API calls (see commit history
-      for the specific bugs found and fixed getting there: a token-budget
-      blowup on class-scope changes, and unreliable forced tool-calling on
-      empty results, fixed by switching to `json_mode`)
+- [x] Comment-triggered GitHub Action (single-repo) + PR-comment posting
+- [x] Local web UI for live PR review and pasted-code review
+- [x] Hosted multi-tenant server: GitHub App OAuth login, encrypted-at-rest
+      per-user Groq keys, a dashboard with manual review actions, and a
+      webhook handler for automatic comment-triggered reviews across every
+      installed repo -- unit-tested (44 tests) with the webhook signature
+      verification, trigger detection, and installation-token flow all
+      exercised against real signed payloads
+- [x] End-to-end verified against real Groq API calls on the CLI/Action/
+      webui path (see commit history for the specific bugs found and fixed
+      getting there: a token-budget blowup on class-scope changes, and
+      unreliable forced tool-calling on empty results, fixed by switching
+      to `json_mode`)
+- [ ] The hosted server's webhook path is unit-tested but not yet verified
+      against a real deployed GitHub App + Render instance (needs the
+      manual GitHub App creation + Render deployment steps above, which
+      only the repo owner can do)

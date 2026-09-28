@@ -8,3 +8,5 @@ venv/
 data/repos/
 data/cache/
 .DS_Store
+server_dev.db
+*.db
