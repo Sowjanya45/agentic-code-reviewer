@@ -1,0 +1,40 @@
+name: PR Review Bot
+
+# Triggered by commenting on a PR (any comment containing the word "review",
+# e.g. "can you please review this PR" or "/review") -- no webhook server or
+# hosting needed, this runs entirely as a GitHub Action.
+on:
+  issue_comment:
+    types: [created]
+
+jobs:
+  review:
+    # issue_comment fires for both issues and PR comments; only PR comments
+    # carry `pull_request`. The commenter check stops the bot's own reply
+    # (which also contains the word "review") from re-triggering itself.
+    if: >
+      github.event.issue.pull_request != null &&
+      github.event.comment.user.login != 'github-actions[bot]' &&
+      contains(toLower(github.event.comment.body), 'review')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run reviewer and post comment
+        env:
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO_FULL_NAME: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.issue.number }}
+          PYTHONPATH: src
+        run: python scripts/pr_comment_bot.py

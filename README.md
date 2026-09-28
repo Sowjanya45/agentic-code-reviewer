@@ -1,35 +1,34 @@
 # Agentic Code Reviewer
 
-An AI code reviewer that reviews PR diffs and produces structured findings
-(security, error handling, missing tests, logic bugs) — plus an automated
-evaluation harness that mines real historical bugs from an open-source
-project's git history and measures how many of them the reviewer actually
-catches.
+An AI code reviewer that produces structured findings (security, error
+handling, missing tests, logic bugs) from a code change — via a live GitHub
+PR, a comment on that PR ("please review this"), or a pasted snippet.
 
 Built with **LangGraph** for orchestration and **Groq** (free-tier,
 open-source models) for inference.
 
-## Why this exists
+## Three ways to use it
 
-Most "AI code review" demos show a model reading a diff and producing
-plausible-looking comments, with no way to tell if those comments are
-actually catching real bugs. This project instead:
+1. **Comment-triggered PR review** — comment anything containing the word
+   "review" (e.g. "can you please review this PR?") on a pull request in a
+   repo with the included GitHub Action set up, and it reviews the PR and
+   replies with its findings as a comment. No server or hosting needed —
+   it runs entirely as a GitHub Action.
+2. **Web UI** — a small local Flask app to review a live PR by number, or
+   paste a code snippet directly, and see structured findings in the browser.
+3. **CLI** — `python -m reviewer.cli owner/repo 123` for a one-off review
+   from the terminal.
 
-1. Mines real (bug-introducing commit → later bug-fixing commit) pairs from
-   an OSS repo's history using a simplified **SZZ algorithm**.
-2. Runs the reviewer against each bug-introducing commit's diff, exactly as
-   if it were reviewing that PR before the bug was ever found.
-3. Automatically checks whether the reviewer's findings land on the actual
-   lines that were later fixed — giving a real, reproducible recall/precision
-   number instead of "it looked good on the examples I tried."
+All three go through the exact same reviewer pipeline.
 
 ## Architecture
 
 ```
-PR diff (GitHub API, or a local git commit for evaluation)
+PR diff (GitHub API) or pasted code
       │
       ▼
 [Ingest]              pull changed files, split into per-file diff hunks
+                       (pasted code becomes one synthetic "addition" hunk)
       │
       ▼
 [Triage]               rank files by risk (auth/payment/security paths first);
@@ -55,7 +54,8 @@ PR diff (GitHub API, or a local git commit for evaluation)
                         file+category, rank by severity/confidence
       │
       ▼
-[Output]               structured JSON + a Markdown summary
+[Output]               structured JSON + a Markdown summary (posted as a
+                       PR comment, or rendered in the web UI)
 ```
 
 Structured finding schema (`src/reviewer/schema.py`):
@@ -73,74 +73,67 @@ class Finding(BaseModel):
     suggested_fix: str | None
 ```
 
-## Evaluation methodology (`src/mining`, `src/eval`)
+## The comment-triggered GitHub Action
 
-`src/mining/szz.py` implements a simplified SZZ:
+`.github/workflows/pr-review-bot.yml` listens for `issue_comment` events.
+When someone comments on a PR and the comment contains the word "review"
+(case-insensitive), it:
 
-1. Find "fixing" commits by commit-message heuristics (`fix`, `fixes #N`, …).
-2. For each, find which lines the fix actually removes/changes.
-3. `git blame` the pre-fix version of the file to find which earlier commit
-   last touched those lines — that's the **bug-introducing commit**.
-4. Locate exactly where that content lands in the *introducing* commit's own
-   diff (via content matching, not just blame's line numbers, since other
-   commits in between shift line numbers) — this is the ground-truth
-   location the reviewer needs to flag.
+1. Checks the comment is actually on a PR (not a plain issue), and that the
+   commenter isn't the bot itself (so its own reply, which also contains
+   the word "review", doesn't retrigger it in a loop).
+2. Checks out the repo, installs dependencies.
+3. Runs `scripts/pr_comment_bot.py`, which reviews the PR via the same
+   `review_pr()` used by the CLI/web UI, and posts the findings back as a
+   PR comment via the GitHub API.
 
-Known simplifications (documented honestly, not hidden): no cross-file
-rename tracking, no filtering of purely cosmetic changes, commit-message
-keyword matching instead of full issue-tracker cross-referencing, and a
-size cap that skips sweeping rewrite commits (they're not realistic "PRs"
-and also produce spurious content-match line ranges).
+**Setup**: add `GROQ_API_KEY` as a repository secret (Settings → Secrets and
+variables → Actions). No GitHub token needs adding — the Action uses the
+repo's automatically-provided `secrets.GITHUB_TOKEN`, scoped to read the PR
+and post comments.
 
-`src/eval/run_eval.py` then:
-- Runs the reviewer on every mined bug-introducing commit.
-- Matches findings to the known bug location (file + line-range overlap,
-  ±3 lines of tolerance).
-- Computes recall (bugs caught / total), precision (findings that matched a
-  known bug / total findings raised), and average findings per case.
-- Runs two baselines for comparison: a plain `ruff` lint pass, and a naive
-  single-prompt LLM review with no chunking/context/per-category checkers —
-  to quantify what the architecture actually adds.
+## Failure handling
 
-**Caveat, stated plainly**: precision here undercounts true positives,
-since a finding that doesn't match the one *known* mined bug in a commit
-might still be a real bug we simply haven't mined evidence for. Treat the
-precision number as a lower bound, and spot-check a sample of "extra"
-findings before trusting it fully.
+- **Per-node retry with backoff** on LLM/API errors, including a global
+  rate limiter (Groq's free tier has a strict tokens-per-minute cap that
+  the checker fan-out would otherwise blow through instantly).
+- **Chunk-level isolation**: one failing check doesn't abort the review —
+  partial results are returned along with the actual failure reason
+  (surfaced in both the web UI and the PR comment), not hidden behind a
+  silent "no findings."
+- **Size-aware triage** for huge PRs, and a context-size cap so a change at
+  class scope inside a large class doesn't expand to the whole file and
+  blow the token budget.
 
 ## Setup
 
 ```bash
 python -m venv .venv
-source .venv/bin/activate
+source .venv/bin/activate      # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
+
 cp .env.example .env   # fill in GROQ_API_KEY and GITHUB_TOKEN
 ```
 
 - `GROQ_API_KEY`: free key from https://console.groq.com
-- `GITHUB_TOKEN`: a GitHub personal access token with `repo:read`, used to
-  pull PR diffs and (for public repos) is optional for cloning during mining
+- `GITHUB_TOKEN`: a GitHub personal access token with `repo:read`, needed
+  by the CLI/web UI to fetch a live PR's diff (the GitHub Action doesn't
+  need this — it uses the repo's own token automatically)
 
 ## Usage
 
-**Review a live PR:**
+**Review a live PR (CLI):**
 ```bash
-python -m reviewer.cli owner/repo 123
+PYTHONPATH=src python -m reviewer.cli owner/repo 123
 ```
 
-**Mine a bug dataset from a repo's history:**
+**Web UI** (review a PR by number, or paste code):
 ```bash
-python -m mining.mine_repo https://github.com/pallets/flask.git \
-    --clone-dir data/repos/flask --out data/mined/flask.json --max-fix-commits 400
+PYTHONPATH=src python -m webui.app
 ```
+then open http://127.0.0.1:5000
 
-**Run the evaluation:**
-```bash
-python -m eval.run_eval --dataset data/mined/flask.json \
-    --repo data/repos/flask --out data/eval/flask_results.json
-```
-
-**Run tests:**
+**Tests:**
 ```bash
 pytest
 ```
@@ -150,36 +143,12 @@ pytest
 - [x] Diff ingestion, tree-sitter context building, size-aware triage
 - [x] LangGraph checker pipeline (security / error_handling / missing_test / logic)
 - [x] Failure handling: per-node retry with backoff (incl. 429 rate limits),
-      chunk-level isolation, size cap with explicit skip reporting, content-hash caching
-- [x] SZZ-style mining pipeline, validated against a synthetic repo with a
-      known planted bug, then run against real Flask history:
-      **107 bug-fix pairs mined** from Flask's last 400 fix-like commits
-      (`data/mined/flask.json`)
-- [x] Evaluation harness + ruff/naive-LLM baselines (code complete)
-- [x] End-to-end verified against a real mined bug (`d718ecf6`, Flask's
-      `provide_automatic_options` bug): reviewer ran with 0 failed chunks and
-      raised 4 findings, two of which correctly overlap the real bug location
-- [x] Minimal local demo UI (`src/webui`) to visually run/inspect reviews
-- [ ] Full evaluation run across all 107 mined bugs (recall/precision numbers)
-      — the pipeline is proven correct on a real case; running the whole
-      dataset just takes longer due to Groq free-tier rate limits (see below)
-
-### Notes on getting this actually working
-
-A few non-obvious issues had to be fixed to get real LLM calls working
-reliably, worth knowing if you extend this:
-
-- **Groq's free tier enforces a tokens-per-minute (TPM) cap as low as 8000**
-  for larger models — a global rate limiter (`reviewer/llm.py`) paces every
-  call process-wide, since LangGraph's concurrent fan-out otherwise floods it
-  instantly even for a single small review.
-- **A change at class scope inside a huge class (e.g. Flask's main `App`
-  class) made the tree-sitter context-builder expand to nearly the whole
-  file** (1400+ lines, ~14K tokens) because it picked the smallest enclosing
-  node, which was the entire class. Fixed with a max-size cap that falls
-  back to the line-window instead (`chunking.py`).
-- **Forced tool-calling (`with_structured_output`'s default method)
-  unreliably fails on this model specifically when the correct answer is "no
-  findings"** — it either refuses to call the tool or hallucinates a
-  nonexistent one. Switched to `json_mode`, which has no such failure mode,
-  at the cost of having to spell out the JSON schema in the prompt manually.
+      chunk-level isolation, size cap, content-hash caching, failure
+      reasons surfaced instead of hidden
+- [x] Pasted-code review mode, reusing the same pipeline
+- [x] Comment-triggered GitHub Action + PR-comment posting
+- [x] Web UI for live PR review and pasted-code review
+- [x] End-to-end verified against real Groq API calls (see commit history
+      for the specific bugs found and fixed getting there: a token-budget
+      blowup on class-scope changes, and unreliable forced tool-calling on
+      empty results, fixed by switching to `json_mode`)

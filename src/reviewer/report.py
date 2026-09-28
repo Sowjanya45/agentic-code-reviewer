@@ -14,6 +14,10 @@ def to_markdown(report: ReviewReport) -> str:
     )
     if report.skipped_files:
         lines.append(f"Skipped: {', '.join(report.skipped_files)}")
+    if report.failure_reasons:
+        lines.append("Failures:")
+        for reason in report.failure_reasons:
+            lines.append(f"- {reason}")
     lines.append("")
 
     if not report.findings:

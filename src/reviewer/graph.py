@@ -13,21 +13,18 @@ from .aggregator import aggregate_findings
 from .cache import ReviewCache
 from .checkers import CATEGORIES, review_chunk
 from .chunking import build_context
-from .diff_ingest import ChangedFile, fetch_pr_files, parse_patch_to_hunks
-from .local_diff import changed_files_from_commit
+from .diff_ingest import fetch_pr_files, parse_patch_to_hunks
 from .raw_code import hunk_from_raw_code
 from .schema import ChunkReviewOutcome, Hunk, ReviewReport
 from .triage import MAX_FILES_DEFAULT, rank_files_by_risk
 
 
 class GraphState(TypedDict, total=False):
-    mode: str  # "github_pr", "local_commit", or "raw_code"
+    mode: str  # "github_pr" or "raw_code"
     pr_identifier: str  # human-readable label for the report
     repo_full_name: str
     pr_number: int
     github_token: str
-    git_repo: object  # git.Repo, only for mode == "local_commit"
-    commit_sha: str
     raw_code: str  # only for mode == "raw_code"
     raw_filename: str
     max_files: int
@@ -42,12 +39,6 @@ class CheckerInput(TypedDict):
     category: str
 
 
-def _fetch_changed_files(state: GraphState) -> list[ChangedFile]:
-    if state["mode"] == "local_commit":
-        return changed_files_from_commit(state["git_repo"], state["commit_sha"])
-    return fetch_pr_files(state["repo_full_name"], state["pr_number"], state["github_token"])
-
-
 def ingest_node(state: GraphState) -> dict:
     if state["mode"] == "raw_code":
         # the pasted snippet IS the context -- no file to fetch, no risk
@@ -55,7 +46,7 @@ def ingest_node(state: GraphState) -> dict:
         hunk = hunk_from_raw_code(state.get("raw_filename") or "pasted_code.py", state["raw_code"])
         return {"hunks": [hunk], "skipped_files": []}
 
-    files = _fetch_changed_files(state)
+    files = fetch_pr_files(state["repo_full_name"], state["pr_number"], state["github_token"])
     ranked = rank_files_by_risk(files)
     max_files = state.get("max_files") or MAX_FILES_DEFAULT
     kept, skipped = ranked[:max_files], ranked[max_files:]
@@ -137,25 +128,9 @@ def review_pr(repo_full_name: str, pr_number: int, github_token: str, max_files:
     return final_state["report"]
 
 
-def review_local_commit(git_repo, commit_sha: str, max_files: int = MAX_FILES_DEFAULT) -> ReviewReport:
-    """Review a single historical commit exactly as if it were a PR diff --
-    used by the evaluation harness to review bug-introducing commits."""
-    app = build_graph()
-    final_state = app.invoke(
-        {
-            "mode": "local_commit",
-            "pr_identifier": f"local:{commit_sha[:8]}",
-            "git_repo": git_repo,
-            "commit_sha": commit_sha,
-            "max_files": max_files,
-        }
-    )
-    return final_state["report"]
-
-
 def review_raw_code(code: str, filename: str = "pasted_code.py") -> ReviewReport:
     """Review a pasted code snippet directly, through the same checker/
-    aggregation/failure-handling pipeline as a PR or historical commit."""
+    aggregation/failure-handling pipeline as a PR."""
     app = build_graph()
     final_state = app.invoke(
         {
