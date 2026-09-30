@@ -2,7 +2,7 @@
 
 An AI code reviewer that produces structured findings (security, error
 handling, missing tests, logic bugs) from a code change — via a live GitHub
-PR, a comment on that PR ("please review this"), or a pasted snippet.
+PR, a comment on that PR ("agentic-review"), or a pasted snippet.
 
 Built with **LangGraph** for orchestration and **Groq** (free-tier,
 open-source models) for inference.
@@ -12,16 +12,16 @@ open-source models) for inference.
 1. **Hosted multi-tenant server** (`server/`) — install a GitHub App once on
    your account, log in, add your own Groq key, and it works on *every*
    repo the installation covers — including repos added later. Comment
-   anything containing "review" on any PR in any of those repos and it
-   reviews and replies automatically; or use the logged-in dashboard to
-   manually review a PR by number or paste a snippet. This is the "real
-   product" version — see **The hosted server** section below.
+   anything containing "agentic-review" on any PR in any of those repos
+   and it reviews and replies automatically; or use the logged-in
+   dashboard to manually review a PR by number or paste a snippet. This is
+   the "real product" version — see **The hosted server** section below.
 2. **Comment-triggered GitHub Action** (`.github/workflows/pr-review-bot.yml`)
-   — the lightweight, single-repo alternative: comment "review" on a PR in
-   *this* repo and a GitHub Action reviews it. No server, no GitHub App,
-   no login — just add one repo secret. Doesn't extend to other repos
-   without copying the workflow file into each one (that's exactly what
-   the hosted server exists to avoid).
+   — the lightweight, single-repo alternative: comment "agentic-review" on
+   a PR in *this* repo and a GitHub Action reviews it. No server, no
+   GitHub App, no login — just add one repo secret. Doesn't extend to
+   other repos without copying the workflow file into each one (that's
+   exactly what the hosted server exists to avoid).
 3. **Local web UI** (`webui/`) — a small local Flask app, single-user,
    driven by a local `.env` — review a live PR by number, or paste a
    snippet directly.
@@ -85,12 +85,12 @@ class Finding(BaseModel):
 ## The comment-triggered GitHub Action
 
 `.github/workflows/pr-review-bot.yml` listens for `issue_comment` events.
-When someone comments on a PR and the comment contains the word "review"
+When someone comments on a PR and the comment contains "agentic-review"
 (case-insensitive), it:
 
 1. Checks the comment is actually on a PR (not a plain issue), and that the
-   commenter isn't the bot itself (so its own reply, which also contains
-   the word "review", doesn't retrigger it in a loop).
+   commenter isn't the bot itself (so its own reply doesn't retrigger it
+   in a loop).
 2. Checks out the repo, installs dependencies.
 3. Runs `scripts/pr_comment_bot.py`, which reviews the PR via the same
    `review_pr()` used by the CLI/web UI, and posts the findings back as a
@@ -118,8 +118,8 @@ Browser                        Server (Flask)                    GitHub
    │  Paste Groq key on dashboard  │                                  │
    │        (encrypted at rest) ───▶  stored in Postgres/SQLite      │
    │                               │                                  │
-(later) comment "please review     │                                  │
-this" on ANY installed repo        │◀──── issue_comment webhook ──────│
+(later) comment "agentic-review"   │                                  │
+on ANY installed repo              │◀──── issue_comment webhook ──────│
                                     │                                  │
                               /webhook: verify signature, look up     │
                               the installation's user + Groq key,     │
@@ -168,8 +168,8 @@ thread since it can exceed GitHub's ~10s webhook response window),
 3. Go back to the GitHub App settings and swap the placeholder Callback/
    Webhook URLs for the real `https://<your-app>.onrender.com/...` ones.
 4. Install the App on your account, log in, paste a Groq key on the
-   dashboard, then test: comment "please review this" on a PR in any repo
-   the app covers.
+   dashboard, then test: comment "agentic-review" on a PR in any repo the
+   app covers.
 
 **Local dev**: omit `DATABASE_URL` to use a local SQLite file
 (`server_dev.db`) automatically. Run with

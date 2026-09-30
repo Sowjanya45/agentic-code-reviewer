@@ -1,7 +1,7 @@
 """GitHub webhook receiver: triggers a review when someone comments
-something containing "review" on a PR, across every repo this GitHub App
-installation covers -- the automatic counterpart to the dashboard's manual
-"Review PR" button.
+something containing "agentic-review" on a PR, across every repo this
+GitHub App installation covers -- the automatic counterpart to the
+dashboard's manual "Review PR" button.
 """
 from __future__ import annotations
 
@@ -41,7 +41,7 @@ def _is_review_trigger_comment(payload: dict) -> bool:
     if commenter.get("type") == "Bot":
         return False  # don't let our own reply (or any bot) retrigger this
     body = payload.get("comment", {}).get("body", "")
-    return "review" in body.lower()
+    return "agentic-review" in body.lower()
 
 
 def _run_review_and_post(installation_id: int, repo_full_name: str, pr_number: int) -> None:
@@ -61,7 +61,7 @@ def _run_review_and_post(installation_id: int, repo_full_name: str, pr_number: i
             pr_number,
             installation_token,
             "## Agentic Code Review\n\nThis account hasn't set up a Groq API key yet. "
-            'Log in to the dashboard and add one, then comment "review" again.',
+            'Log in to the dashboard and add one, then comment "agentic-review" again.',
         )
         return
 

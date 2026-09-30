@@ -1,7 +1,7 @@
 name: PR Review Bot
 
-# Triggered by commenting on a PR (any comment containing the word "review",
-# e.g. "can you please review this PR" or "/review") -- no webhook server or
+# Triggered by commenting on a PR (any comment containing "agentic-review",
+# e.g. "can you run an agentic-review on this?") -- no webhook server or
 # hosting needed, this runs entirely as a GitHub Action.
 on:
   issue_comment:
@@ -11,11 +11,11 @@ jobs:
   review:
     # issue_comment fires for both issues and PR comments; only PR comments
     # carry `pull_request`. The commenter check stops the bot's own reply
-    # (which also contains the word "review") from re-triggering itself.
+    # from re-triggering itself.
     if: >
       github.event.issue.pull_request != null &&
       github.event.comment.user.login != 'github-actions[bot]' &&
-      contains(toLower(github.event.comment.body), 'review')
+      contains(toLower(github.event.comment.body), 'agentic-review')
     runs-on: ubuntu-latest
     permissions:
       contents: read

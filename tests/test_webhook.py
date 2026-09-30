@@ -89,13 +89,33 @@ def test_installation_created_event_records_installation(monkeypatch):
     db.close()
 
 
-def test_trigger_detects_review_comment_on_a_pr_from_a_human():
+def test_trigger_detects_agentic_review_comment_on_a_pr_from_a_human():
     payload = {
         "action": "created",
         "issue": {"pull_request": {}},
-        "comment": {"user": {"type": "User"}, "body": "can you please review this?"},
+        "comment": {"user": {"type": "User"}, "body": "can you run an agentic-review on this?"},
     }
     assert _is_review_trigger_comment(payload)
+
+
+def test_trigger_is_case_insensitive():
+    payload = {
+        "action": "created",
+        "issue": {"pull_request": {}},
+        "comment": {"user": {"type": "User"}, "body": "Agentic-Review please"},
+    }
+    assert _is_review_trigger_comment(payload)
+
+
+def test_trigger_ignores_plain_word_review_without_the_full_phrase():
+    # The whole point of the "agentic-review" phrase is to avoid false
+    # triggers from ordinary PR chatter that just happens to say "review".
+    payload = {
+        "action": "created",
+        "issue": {"pull_request": {}},
+        "comment": {"user": {"type": "User"}, "body": "great work, review looks good!"},
+    }
+    assert not _is_review_trigger_comment(payload)
 
 
 def test_trigger_ignores_comment_without_review_keyword():
@@ -111,7 +131,7 @@ def test_trigger_ignores_comment_on_plain_issue_not_pr():
     payload = {
         "action": "created",
         "issue": {},
-        "comment": {"user": {"type": "User"}, "body": "please review"},
+        "comment": {"user": {"type": "User"}, "body": "agentic-review please"},
     }
     assert not _is_review_trigger_comment(payload)
 
@@ -120,7 +140,7 @@ def test_trigger_ignores_bot_comments_to_avoid_self_retrigger():
     payload = {
         "action": "created",
         "issue": {"pull_request": {}},
-        "comment": {"user": {"type": "Bot"}, "body": "## Agentic Code Review\n\nreview complete"},
+        "comment": {"user": {"type": "Bot"}, "body": "## Agentic Code Review\n\nagentic-review complete"},
     }
     assert not _is_review_trigger_comment(payload)
 
